@@ -249,12 +249,6 @@
             height: auto;
         }
 
-        .parse-layout {
-            display: grid;
-            grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 16px;
-        }
-
         .method-card,
         .result-card {
             background: var(--surface-bg);
@@ -263,14 +257,17 @@
             padding: 18px;
         }
 
+        .method-card {
+            margin-bottom: 16px;
+        }
+
         .method-card p,
         .camera-status {
             margin: 0 0 12px;
             color: var(--text-muted);
         }
 
-        .drop-zone,
-        .paste-zone {
+        .drop-zone {
             border: 2px dashed #c7d4e3;
             border-radius: 16px;
             background: #ffffff;
@@ -283,8 +280,7 @@
             cursor: pointer;
         }
 
-        .drop-zone:hover,
-        .paste-zone:hover {
+        .drop-zone:hover {
             border-color: var(--primary);
             background: #f8fbff;
         }
@@ -293,6 +289,21 @@
             border-color: var(--primary);
             background: #edf5ff;
             transform: scale(1.01);
+        }
+
+        .drop-zone.is-camera-mode {
+            cursor: default;
+            padding: 0;
+            border-style: solid;
+            border-color: #27364d;
+            background: #0f172a;
+            transform: none;
+        }
+
+        .drop-zone-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
 
         .drop-zone-title {
@@ -307,15 +318,44 @@
             color: var(--text-muted);
         }
 
-        .paste-zone {
-            margin-top: 14px;
-            text-align: left;
+        .action-row {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            justify-content: center;
+            width: 100%;
         }
 
-        .paste-zone strong {
-            display: block;
-            margin-bottom: 6px;
-            color: #18263b;
+        .camera-panel {
+            padding: 18px;
+            text-align: left;
+            color: #e2e8f0;
+        }
+
+        .camera-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .camera-select-wrap {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: #e2e8f0;
+            font-weight: 600;
+        }
+
+        .camera-select {
+            min-width: 180px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            border: 1px solid #41556f;
+            background: #0f172a;
+            color: #f8fafc;
+            font-size: 0.95rem;
         }
 
         .camera-reader {
@@ -341,10 +381,6 @@
             width: 100% !important;
             height: auto !important;
             display: block;
-        }
-
-        .result-card {
-            margin-top: 16px;
         }
 
         .result-header {
@@ -413,9 +449,6 @@
                 padding: 14px;
             }
 
-            .parse-layout {
-                grid-template-columns: 1fr;
-            }
         }
 
         @media (max-width: 560px) {
@@ -430,12 +463,19 @@
             .tab-button,
             .grow,
             .buttons button,
-            .camera-actions button,
+            .action-row button,
+            .camera-toolbar button,
+            .camera-select-wrap,
+            .camera-select,
             .result-header button {
                 width: 100%;
             }
 
             .result-header {
+                align-items: stretch;
+            }
+
+            .camera-toolbar {
                 align-items: stretch;
             }
         }
@@ -473,41 +513,41 @@
             <h1>安全的 QR / 條碼解析器</h1>
             <p class="security-note">
                 <strong>🔒 權限延後請求</strong><br>
-                只有在您按下「使用鏡頭解析」時，瀏覽器才會要求鏡頭權限；單純開啟頁面不會先取權限。
+                只有在您按下「使用鏡頭」時，瀏覽器才會要求鏡頭權限；單純開啟頁面不會先取權限。
             </p>
-            <p class="panel-intro">支援選檔、拖曳圖片、直接貼上剪貼簿圖片，以及手動啟動鏡頭即時解析。</p>
+            <p class="panel-intro">支援選圖、拖曳圖片，以及手動啟動鏡頭即時解析。</p>
 
-            <div class="parse-layout">
-                <div class="method-card">
-                    <h2>圖片解析</h2>
-                    <p>可直接選圖、把圖片拖進框內，或在本頁貼上剪貼簿中的圖片。</p>
+            <div class="method-card">
+                <h2>圖片與鏡頭解析</h2>
+                <p>可直接選圖、把圖片拖進框內，或切換成鏡頭掃描模式。</p>
 
-                    <div id="dropZone" class="drop-zone" tabindex="0" aria-label="圖片拖放與選檔區">
-                        <input id="imageInput" type="file" accept="image/*" hidden>
+                <div id="dropZone" class="drop-zone" tabindex="0" aria-label="圖片拖放與選檔區">
+                    <input id="imageInput" type="file" accept="image/*" hidden>
+
+                    <div id="dropZoneContent" class="drop-zone-content">
                         <p class="drop-zone-title">把圖片拖曳到這裡</p>
                         <p class="drop-zone-subtitle">也可以按按鈕選擇圖片檔案</p>
-                        <button id="pickImageBtn" class="button-primary" type="button">選擇圖片解析</button>
+
+                        <div class="action-row">
+                            <button id="pickImageBtn" class="button-primary" type="button">選擇圖片</button>
+                            <button id="startCameraBtn" class="button-secondary" type="button">使用鏡頭</button>
+                        </div>
                     </div>
 
-                    <div id="pasteZone" class="paste-zone" tabindex="0" aria-label="剪貼簿貼上解析區">
-                        <strong>剪貼簿貼上解析</strong>
-                        <p>點一下這個區塊後按 Ctrl + V，如果剪貼簿中有圖片，系統會直接嘗試解析。</p>
-                    </div>
-                </div>
+                    <div id="cameraPanel" class="camera-panel" hidden>
+                        <div class="camera-toolbar">
+                            <label id="cameraSelectWrap" class="camera-select-wrap" hidden>
+                                <span>鏡頭</span>
+                                <select id="cameraSelect" class="camera-select" aria-label="選擇鏡頭"></select>
+                            </label>
+                            <button id="stopCameraBtn" class="button-secondary" type="button" disabled>停止鏡頭</button>
+                        </div>
 
-                <div class="method-card">
-                    <h2>鏡頭即時解析</h2>
-                    <p>按下按鈕後才會開始取得鏡頭與詢問權限，停止後可完全釋放鏡頭。</p>
+                        <p id="cameraStatus" class="camera-status">尚未啟動鏡頭。</p>
 
-                    <div class="camera-actions">
-                        <button id="startCameraBtn" class="button-primary grow" type="button">使用鏡頭解析</button>
-                        <button id="stopCameraBtn" class="button-secondary grow" type="button" disabled>停止鏡頭</button>
-                    </div>
-
-                    <p id="cameraStatus" class="camera-status">尚未啟動鏡頭。</p>
-
-                    <div id="camera-reader" class="camera-reader">
-                        <p class="camera-placeholder">鏡頭畫面會顯示在這裡</p>
+                        <div id="camera-reader" class="camera-reader">
+                            <p class="camera-placeholder">鏡頭畫面會顯示在這裡</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -518,7 +558,7 @@
                     <button id="copyResultBtn" class="button-ghost" type="button" disabled>複製結果</button>
                 </div>
 
-                <p id="parseStatus" class="parse-status" data-tone="warning">請先選擇圖片、拖曳圖片、貼上圖片，或手動啟動鏡頭開始解析。</p>
+                <p id="parseStatus" class="parse-status" data-tone="warning">請先選擇圖片、拖曳圖片，或手動啟動鏡頭開始解析。</p>
 
                 <div id="resultMeta" class="result-meta" hidden>
                     <span>來源：<strong id="resultSource">-</strong></span>
@@ -550,9 +590,12 @@
         const imageInput = document.getElementById('imageInput');
         const pickImageBtn = document.getElementById('pickImageBtn');
         const dropZone = document.getElementById('dropZone');
-        const pasteZone = document.getElementById('pasteZone');
+        const dropZoneContent = document.getElementById('dropZoneContent');
+        const cameraPanel = document.getElementById('cameraPanel');
         const startCameraBtn = document.getElementById('startCameraBtn');
         const stopCameraBtn = document.getElementById('stopCameraBtn');
+        const cameraSelectWrap = document.getElementById('cameraSelectWrap');
+        const cameraSelect = document.getElementById('cameraSelect');
         const cameraStatus = document.getElementById('cameraStatus');
         const cameraReader = document.getElementById('camera-reader');
         const parseStatus = document.getElementById('parseStatus');
@@ -567,6 +610,8 @@
         let decodeInProgress = false;
         let latestDecodedValue = '';
         let lastCameraDecodedValue = '';
+        let availableCameras = [];
+        let isInitializingCamera = false;
 
         function setParseStatus(message, tone = 'warning') {
             parseStatus.textContent = message;
@@ -591,6 +636,51 @@
 
         function setCameraPlaceholder(message = '鏡頭畫面會顯示在這裡') {
             cameraReader.innerHTML = `<p class="camera-placeholder">${message}</p>`;
+        }
+
+        function setInputMode(mode) {
+            const isCameraMode = mode === 'camera';
+
+            dropZone.classList.toggle('is-camera-mode', isCameraMode);
+            dropZoneContent.hidden = isCameraMode;
+            cameraPanel.hidden = !isCameraMode;
+            dropZone.tabIndex = isCameraMode ? -1 : 0;
+        }
+
+        function resetCameraSelection() {
+            availableCameras = [];
+            cameraSelect.innerHTML = '';
+            cameraSelectWrap.hidden = true;
+        }
+
+        function getCameraId(camera) {
+            return camera.id || camera.deviceId;
+        }
+
+        function getCameraLabel(camera, index) {
+            return camera.label || `鏡頭 ${index + 1}`;
+        }
+
+        function populateCameraSelection(cameras, selectedId) {
+            availableCameras = cameras;
+
+            if (cameras.length <= 1) {
+                cameraSelect.innerHTML = '';
+                cameraSelectWrap.hidden = true;
+                return;
+            }
+
+            cameraSelect.innerHTML = '';
+
+            cameras.forEach((camera, index) => {
+                const option = document.createElement('option');
+                option.value = getCameraId(camera);
+                option.textContent = getCameraLabel(camera, index);
+                cameraSelect.appendChild(option);
+            });
+
+            cameraSelect.value = selectedId;
+            cameraSelectWrap.hidden = false;
         }
 
         function resolveFormatLabel(payload) {
@@ -697,6 +787,10 @@
                 return;
             }
 
+            if (cameraRunning || !cameraPanel.hidden) {
+                await stopCameraScan({ silent: true });
+            }
+
             decodeInProgress = true;
             setParseStatus(`${sourceLabel}解析中...`, 'warning');
 
@@ -740,26 +834,36 @@
             return { width: size, height: size };
         }
 
-        async function stopCameraScan({ silent = false } = {}) {
-            if (!cameraScanner) {
-                return;
-            }
-
+        async function stopCameraScan({ silent = false, keepCameraPanel = false, keepCameraList = false, statusText = '尚未啟動鏡頭。' } = {}) {
             stopCameraBtn.disabled = true;
 
-            try {
-                await cameraScanner.stop();
-            } catch (error) {
-                console.warn('停止鏡頭時發生錯誤:', error);
-            }
-
-            cameraScanner.clear();
+            const scanner = cameraScanner;
             cameraScanner = null;
             cameraRunning = false;
+            isInitializingCamera = false;
             lastCameraDecodedValue = '';
+
+            if (scanner) {
+                try {
+                    await scanner.stop();
+                } catch (error) {
+                    console.warn('停止鏡頭時發生錯誤:', error);
+                }
+
+                scanner.clear();
+            }
+
+            if (!keepCameraList) {
+                resetCameraSelection();
+            }
+
+            if (!keepCameraPanel) {
+                setInputMode('image');
+            }
+
             startCameraBtn.disabled = false;
             stopCameraBtn.disabled = true;
-            cameraStatus.textContent = '尚未啟動鏡頭。';
+            cameraStatus.textContent = statusText;
             setCameraPlaceholder();
 
             if (!silent) {
@@ -767,30 +871,55 @@
             }
         }
 
-        async function startCameraScan() {
+        async function restartCameraScan(cameraId) {
+            if (!cameraId || isInitializingCamera) {
+                return;
+            }
+
+            await stopCameraScan({
+                silent: true,
+                keepCameraPanel: true,
+                keepCameraList: true,
+                statusText: '正在切換鏡頭...'
+            });
+
+            await startCameraScan(cameraId, { reuseCameraList: true });
+        }
+
+        async function startCameraScan(cameraIdOverride = null, { reuseCameraList = false } = {}) {
             if (!Html5QrcodeLib) {
                 setParseStatus('html5-qrcode 載入失敗，無法啟動鏡頭。', 'error');
                 return;
             }
 
-            if (cameraRunning) {
+            if (cameraRunning || isInitializingCamera) {
                 return;
             }
 
+            isInitializingCamera = true;
+            setInputMode('camera');
             startCameraBtn.disabled = true;
+            stopCameraBtn.disabled = true;
             setParseStatus('正在準備鏡頭，接下來才會由瀏覽器要求權限。', 'warning');
-            cameraStatus.textContent = '正在查找可用鏡頭...';
-            cameraReader.innerHTML = '';
+            cameraStatus.textContent = reuseCameraList ? '正在啟動選定鏡頭...' : '正在查找可用鏡頭...';
+            setCameraPlaceholder('鏡頭畫面準備中...');
 
             try {
-                const cameras = await Html5QrcodeLib.getCameras();
+                const cameras = reuseCameraList && availableCameras.length > 0
+                    ? availableCameras
+                    : await Html5QrcodeLib.getCameras();
 
                 if (!cameras || cameras.length === 0) {
                     throw new Error('NO_CAMERA');
                 }
 
-                const selectedCamera = pickPreferredCamera(cameras);
-                const cameraId = selectedCamera.id || selectedCamera.deviceId;
+                const selectedCamera = cameraIdOverride
+                    ? cameras.find((camera) => getCameraId(camera) === cameraIdOverride) || pickPreferredCamera(cameras)
+                    : pickPreferredCamera(cameras);
+                const cameraId = getCameraId(selectedCamera);
+
+                populateCameraSelection(cameras, cameraId);
+                cameraStatus.textContent = `鏡頭啟動中：${selectedCamera.label || '預設鏡頭'}`;
 
                 cameraScanner = new Html5QrcodeLib('camera-reader');
 
@@ -808,7 +937,9 @@
 
                         lastCameraDecodedValue = decodedValue;
                         setResult(decodedValue, '鏡頭即時讀取', resolveFormatLabel(decodedResult));
-                        setParseStatus('已偵測到內容，鏡頭會持續掃描直到你手動停止。', 'success');
+                        setParseStatus('辨識成功，鏡頭已自動關閉。', 'success');
+                        cameraStatus.textContent = '已完成辨識，正在關閉鏡頭...';
+                        void stopCameraScan({ silent: true, statusText: '已完成辨識。' });
                     },
                     () => {
                         // 掃描進行中時找不到碼屬於正常情況，無需持續刷錯誤訊息。
@@ -816,9 +947,9 @@
                 );
 
                 cameraRunning = true;
-                startCameraBtn.disabled = true;
+                isInitializingCamera = false;
                 stopCameraBtn.disabled = false;
-                cameraStatus.textContent = `鏡頭已啟動：${selectedCamera.label || '預設鏡頭'}`;
+                cameraStatus.textContent = `鏡頭已啟動：${getCameraLabel(selectedCamera, cameras.indexOf(selectedCamera))}`;
                 setParseStatus('鏡頭已啟動，請把 QR Code 或條碼對準畫面中央。', 'success');
             } catch (error) {
                 console.error('鏡頭啟動失敗:', error);
@@ -829,8 +960,11 @@
                 }
 
                 cameraRunning = false;
+                isInitializingCamera = false;
                 startCameraBtn.disabled = false;
                 stopCameraBtn.disabled = true;
+                resetCameraSelection();
+                setInputMode('image');
                 cameraStatus.textContent = '尚未啟動鏡頭。';
                 setCameraPlaceholder();
                 setParseStatus('無法啟動鏡頭，請確認已授權權限，且瀏覽器環境允許使用攝影機。', 'error');
@@ -885,6 +1019,10 @@
             imageInput.click();
         });
 
+        cameraSelect.addEventListener('change', () => {
+            void restartCameraScan(cameraSelect.value);
+        });
+
         imageInput.addEventListener('change', async (event) => {
             const file = getImageFile(event.target.files || []);
 
@@ -896,10 +1034,18 @@
         });
 
         dropZone.addEventListener('click', () => {
+            if (!cameraPanel.hidden) {
+                return;
+            }
+
             imageInput.click();
         });
 
         dropZone.addEventListener('keydown', (event) => {
+            if (!cameraPanel.hidden) {
+                return;
+            }
+
             if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 imageInput.click();
@@ -932,10 +1078,6 @@
             }
 
             await decodeImageFile(file, '拖曳圖片');
-        });
-
-        pasteZone.addEventListener('click', () => {
-            pasteZone.focus();
         });
 
         document.addEventListener('paste', (event) => {
@@ -972,6 +1114,8 @@
             startCameraBtn.disabled = true;
         }
 
+        setInputMode('image');
+        resetCameraSelection();
         resetResult();
         clearGenerator();
     </script>

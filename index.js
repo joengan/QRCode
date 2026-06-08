@@ -971,25 +971,6 @@
             imageInput.value = '';
         });
 
-        dropZone.addEventListener('click', () => {
-            if (!cameraPanel.hidden) {
-                return;
-            }
-
-            imageInput.click();
-        });
-
-        dropZone.addEventListener('keydown', (event) => {
-            if (!cameraPanel.hidden) {
-                return;
-            }
-
-            if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                imageInput.click();
-            }
-        });
-
         dropZone.addEventListener('dragenter', (event) => {
             event.preventDefault();
             dropZone.classList.add('is-dragging');

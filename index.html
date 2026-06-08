@@ -295,9 +295,14 @@
             cursor: default;
             padding: 0;
             border-style: solid;
-            border-color: #27364d;
-            background: #0f172a;
+            border-color: var(--surface-border);
+            background: #ffffff;
             transform: none;
+        }
+
+        .drop-zone.is-camera-mode:hover {
+            border-color: var(--surface-border);
+            background: #ffffff;
         }
 
         .drop-zone-content {
@@ -329,7 +334,7 @@
         .camera-panel {
             padding: 18px;
             text-align: left;
-            color: #e2e8f0;
+            color: var(--text-main);
         }
 
         .camera-toolbar {
@@ -344,7 +349,7 @@
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            color: #e2e8f0;
+            color: var(--text-main);
             font-weight: 600;
         }
 
@@ -352,9 +357,9 @@
             min-width: 180px;
             padding: 10px 12px;
             border-radius: 12px;
-            border: 1px solid #41556f;
-            background: #0f172a;
-            color: #f8fafc;
+            border: 1px solid var(--surface-border);
+            background: #ffffff;
+            color: var(--text-main);
             font-size: 0.95rem;
         }
 
@@ -362,12 +367,12 @@
             min-height: 290px;
             border-radius: 16px;
             overflow: hidden;
-            background: linear-gradient(145deg, #0f172a 0%, #1e293b 100%);
-            border: 1px solid #27364d;
+            background: linear-gradient(180deg, #f8fbff 0%, #edf3fa 100%);
+            border: 1px solid var(--surface-border);
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #cbd5e1;
+            color: var(--text-muted);
             text-align: center;
             padding: 16px;
         }

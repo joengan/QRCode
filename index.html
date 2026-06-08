@@ -375,6 +375,11 @@
             color: var(--text-muted);
             text-align: center;
             padding: 16px;
+            position: relative;
+            touch-action: none;
+            overscroll-behavior: contain;
+            user-select: none;
+            -webkit-user-select: none;
         }
 
         .camera-placeholder {
@@ -386,6 +391,36 @@
             width: 100% !important;
             height: auto !important;
             display: block;
+        }
+
+        .camera-reader video {
+            transform: scale(var(--camera-preview-scale, 1));
+            transform-origin: center center;
+            transition: transform 0.12s ease;
+            will-change: transform;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-user-drag: none;
+            touch-action: none;
+        }
+
+        .camera-focus-indicator {
+            position: absolute;
+            width: 76px;
+            height: 76px;
+            border-radius: 18px;
+            border: 2px solid rgba(21, 101, 192, 0.95);
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.6), 0 10px 20px rgba(21, 101, 192, 0.18);
+            background: rgba(255, 255, 255, 0.12);
+            pointer-events: none;
+            opacity: 0;
+            transform: translate(-50%, -50%) scale(0.72);
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+
+        .camera-focus-indicator.is-visible {
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1);
         }
 
         .result-header {
@@ -617,6 +652,32 @@
         let lastCameraDecodedValue = '';
         let availableCameras = [];
         let isInitializingCamera = false;
+        let cameraControlState = createDefaultCameraControlState();
+        let cameraFocusIndicatorTimer = null;
+
+        function createDefaultCameraControlState() {
+            return {
+                track: null,
+                video: null,
+                hardwareZoomSupported: false,
+                zoomMin: 1,
+                zoomMax: 4,
+                zoomStep: 0.08,
+                currentZoom: 1,
+                previewZoom: 1,
+                focusModes: [],
+                pointsOfInterestSupported: false,
+                activePointers: new Map(),
+                pinchActive: false,
+                pinchStartDistance: 0,
+                pinchStartZoom: 1,
+                pointerDown: null,
+                pendingZoom: null,
+                zoomUpdateInFlight: false,
+                focusNoticeShown: false,
+                gestureStartZoom: 1
+            };
+        }
 
         function setParseStatus(message, tone = 'warning') {
             parseStatus.textContent = message;
@@ -640,7 +701,492 @@
         }
 
         function setCameraPlaceholder(message = '鏡頭畫面會顯示在這裡') {
-            cameraReader.innerHTML = `<p class="camera-placeholder">${message}</p>`;
+            cameraReader.style.setProperty('--camera-preview-scale', '1');
+            cameraReader.innerHTML = `
+                <p class="camera-placeholder">${message}</p>
+                <div class="camera-focus-indicator" aria-hidden="true"></div>
+            `;
+        }
+
+        function getCameraVideoElement() {
+            return cameraReader.querySelector('video');
+        }
+
+        function getCameraFocusIndicatorElement() {
+            return cameraReader.querySelector('.camera-focus-indicator');
+        }
+
+        function getCameraTrack() {
+            const video = getCameraVideoElement();
+            const stream = video?.srcObject;
+
+            if (!stream || typeof stream.getVideoTracks !== 'function') {
+                return null;
+            }
+
+            return stream.getVideoTracks()[0] || null;
+        }
+
+        function hideCameraPlaceholder() {
+            const placeholder = cameraReader.querySelector('.camera-placeholder');
+
+            if (placeholder) {
+                placeholder.hidden = true;
+            }
+        }
+
+        function clampValue(value, min, max) {
+            return Math.min(max, Math.max(min, value));
+        }
+
+        function resetCameraPreviewScale() {
+            cameraReader.style.setProperty('--camera-preview-scale', '1');
+
+            const video = getCameraVideoElement();
+            if (video) {
+                video.style.transformOrigin = 'center center';
+            }
+        }
+
+        function getCurrentCameraZoomLevel() {
+            return cameraControlState.hardwareZoomSupported
+                ? cameraControlState.currentZoom
+                : cameraControlState.previewZoom;
+        }
+
+        function snapCameraZoomValue(value) {
+            const { zoomMin, zoomMax, zoomStep } = cameraControlState;
+            const clampedValue = clampValue(value, zoomMin, zoomMax);
+
+            if (!Number.isFinite(zoomStep) || zoomStep <= 0) {
+                return clampedValue;
+            }
+
+            const steps = Math.round((clampedValue - zoomMin) / zoomStep);
+            return clampValue(zoomMin + (steps * zoomStep), zoomMin, zoomMax);
+        }
+
+        function getCameraInteractionRect() {
+            return getCameraVideoElement()?.getBoundingClientRect() || cameraReader.getBoundingClientRect();
+        }
+
+        function updateCameraTransformOrigin(clientX, clientY) {
+            const video = getCameraVideoElement();
+
+            if (!video) {
+                return;
+            }
+
+            const rect = getCameraInteractionRect();
+            const originX = clampValue(((clientX - rect.left) / rect.width) * 100, 0, 100);
+            const originY = clampValue(((clientY - rect.top) / rect.height) * 100, 0, 100);
+
+            video.style.transformOrigin = `${originX}% ${originY}%`;
+        }
+
+        function applyDigitalPreviewZoom(zoomLevel) {
+            const nextZoom = clampValue(zoomLevel, cameraControlState.zoomMin, cameraControlState.zoomMax);
+            cameraControlState.previewZoom = nextZoom;
+            cameraReader.style.setProperty('--camera-preview-scale', nextZoom.toFixed(3));
+        }
+
+        function clearCameraFocusIndicator() {
+            if (cameraFocusIndicatorTimer) {
+                window.clearTimeout(cameraFocusIndicatorTimer);
+                cameraFocusIndicatorTimer = null;
+            }
+
+            const indicator = getCameraFocusIndicatorElement();
+            if (indicator) {
+                indicator.classList.remove('is-visible');
+            }
+        }
+
+        function showCameraFocusIndicator(clientX, clientY) {
+            const indicator = getCameraFocusIndicatorElement();
+
+            if (!indicator) {
+                return;
+            }
+
+            const bounds = cameraReader.getBoundingClientRect();
+            const left = clampValue(clientX - bounds.left, 0, bounds.width);
+            const top = clampValue(clientY - bounds.top, 0, bounds.height);
+
+            indicator.style.left = `${left}px`;
+            indicator.style.top = `${top}px`;
+            indicator.classList.remove('is-visible');
+            void indicator.offsetWidth;
+            indicator.classList.add('is-visible');
+
+            if (cameraFocusIndicatorTimer) {
+                window.clearTimeout(cameraFocusIndicatorTimer);
+            }
+
+            cameraFocusIndicatorTimer = window.setTimeout(() => {
+                indicator.classList.remove('is-visible');
+            }, 900);
+        }
+
+        async function applyCameraZoom(targetZoom) {
+            const track = cameraControlState.track || getCameraTrack();
+
+            if (cameraControlState.hardwareZoomSupported && track) {
+                const nextZoom = snapCameraZoomValue(targetZoom);
+
+                if (Math.abs(nextZoom - cameraControlState.currentZoom) < 0.001) {
+                    return;
+                }
+
+                try {
+                    await track.applyConstraints({ advanced: [{ zoom: nextZoom }] });
+                    cameraControlState.currentZoom = nextZoom;
+                    resetCameraPreviewScale();
+                    return;
+                } catch (error) {
+                    console.warn('硬體 zoom 套用失敗，改用預覽縮放:', error);
+                    cameraControlState.hardwareZoomSupported = false;
+                    cameraControlState.zoomMin = 1;
+                    cameraControlState.zoomMax = 4;
+                    cameraControlState.zoomStep = 0.08;
+                    cameraControlState.previewZoom = 1;
+                }
+            }
+
+            applyDigitalPreviewZoom(targetZoom);
+        }
+
+        async function flushPendingCameraZoom() {
+            if (cameraControlState.zoomUpdateInFlight) {
+                return;
+            }
+
+            cameraControlState.zoomUpdateInFlight = true;
+
+            try {
+                while (cameraControlState.pendingZoom !== null) {
+                    const nextZoom = cameraControlState.pendingZoom;
+                    cameraControlState.pendingZoom = null;
+                    await applyCameraZoom(nextZoom);
+                }
+            } finally {
+                cameraControlState.zoomUpdateInFlight = false;
+            }
+        }
+
+        function queueCameraZoom(targetZoom, origin = null) {
+            if (!cameraRunning || isInitializingCamera) {
+                return;
+            }
+
+            if (origin) {
+                updateCameraTransformOrigin(origin.clientX, origin.clientY);
+            }
+
+            cameraControlState.pendingZoom = targetZoom;
+
+            if (!cameraControlState.zoomUpdateInFlight) {
+                void flushPendingCameraZoom();
+            }
+        }
+
+        function getPointerDistance(points) {
+            if (points.length < 2) {
+                return 0;
+            }
+
+            return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+        }
+
+        function getPointerMidpoint(points) {
+            if (points.length < 2) {
+                return null;
+            }
+
+            return {
+                clientX: (points[0].x + points[1].x) / 2,
+                clientY: (points[0].y + points[1].y) / 2
+            };
+        }
+
+        async function focusCameraAtPoint(clientX, clientY) {
+            if (!cameraRunning) {
+                return;
+            }
+
+            const track = cameraControlState.track || getCameraTrack();
+            if (!track) {
+                return;
+            }
+
+            showCameraFocusIndicator(clientX, clientY);
+
+            const rect = getCameraInteractionRect();
+            const pointOfInterest = {
+                x: clampValue((clientX - rect.left) / rect.width, 0, 1),
+                y: clampValue((clientY - rect.top) / rect.height, 0, 1)
+            };
+            const advancedConstraint = {};
+
+            if (cameraControlState.pointsOfInterestSupported) {
+                advancedConstraint.pointsOfInterest = [pointOfInterest];
+            }
+
+            if (cameraControlState.focusModes.includes('single-shot')) {
+                advancedConstraint.focusMode = 'single-shot';
+            } else if (cameraControlState.focusModes.includes('continuous')) {
+                advancedConstraint.focusMode = 'continuous';
+            }
+
+            if (!Object.keys(advancedConstraint).length) {
+                if (!cameraControlState.focusNoticeShown) {
+                    cameraControlState.focusNoticeShown = true;
+                    setParseStatus('目前裝置不支援點擊對焦，已保留滾輪與手勢縮放。', 'warning');
+                }
+                return;
+            }
+
+            try {
+                await track.applyConstraints({ advanced: [advancedConstraint] });
+            } catch (error) {
+                console.warn('點擊對焦失敗:', error);
+
+                if (!cameraControlState.focusNoticeShown) {
+                    cameraControlState.focusNoticeShown = true;
+                    setParseStatus('鏡頭不接受點擊對焦指令，已保留縮放操作。', 'warning');
+                }
+            }
+        }
+
+        async function enableDefaultCameraFocusMode() {
+            const track = cameraControlState.track;
+
+            if (!track) {
+                return;
+            }
+
+            if (cameraControlState.focusModes.includes('continuous')) {
+                try {
+                    await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+                } catch (error) {
+                    console.warn('啟用連續自動對焦失敗:', error);
+                }
+            }
+        }
+
+        async function initializeCameraControlState() {
+            cameraControlState = createDefaultCameraControlState();
+            resetCameraPreviewScale();
+            hideCameraPlaceholder();
+
+            const video = getCameraVideoElement();
+            const track = getCameraTrack();
+
+            cameraControlState.video = video;
+            cameraControlState.track = track;
+
+            if (!track) {
+                return;
+            }
+
+            const capabilities = typeof track.getCapabilities === 'function'
+                ? track.getCapabilities()
+                : {};
+            const settings = typeof track.getSettings === 'function'
+                ? track.getSettings()
+                : {};
+            const zoomCapability = capabilities?.zoom;
+
+            if (zoomCapability && typeof zoomCapability.min === 'number' && typeof zoomCapability.max === 'number') {
+                cameraControlState.hardwareZoomSupported = true;
+                cameraControlState.zoomMin = zoomCapability.min;
+                cameraControlState.zoomMax = zoomCapability.max;
+                cameraControlState.zoomStep = zoomCapability.step || 0.1;
+                cameraControlState.currentZoom = typeof settings.zoom === 'number'
+                    ? settings.zoom
+                    : clampValue(1, cameraControlState.zoomMin, cameraControlState.zoomMax);
+            } else {
+                cameraControlState.hardwareZoomSupported = false;
+                cameraControlState.zoomMin = 1;
+                cameraControlState.zoomMax = 4;
+                cameraControlState.zoomStep = 0.08;
+                cameraControlState.previewZoom = 1;
+            }
+
+            cameraControlState.focusModes = Array.isArray(capabilities?.focusMode)
+                ? capabilities.focusMode.filter((mode) => typeof mode === 'string')
+                : [];
+            cameraControlState.pointsOfInterestSupported = 'pointsOfInterest' in capabilities;
+
+            await enableDefaultCameraFocusMode();
+        }
+
+        function handleCameraWheelZoom(event) {
+            if (!cameraRunning) {
+                return;
+            }
+
+            event.preventDefault();
+
+            const zoomDelta = event.deltaY < 0
+                ? Math.max(cameraControlState.zoomStep, 0.1)
+                : -Math.max(cameraControlState.zoomStep, 0.1);
+
+            queueCameraZoom(getCurrentCameraZoomLevel() + zoomDelta, {
+                clientX: event.clientX,
+                clientY: event.clientY
+            });
+        }
+
+        function handleCameraPointerDown(event) {
+            if (!cameraRunning) {
+                return;
+            }
+
+            if (event.pointerType === 'mouse' && event.button !== 0) {
+                return;
+            }
+
+            event.preventDefault();
+            cameraReader.setPointerCapture?.(event.pointerId);
+
+            cameraControlState.activePointers.set(event.pointerId, {
+                x: event.clientX,
+                y: event.clientY
+            });
+
+            if (cameraControlState.activePointers.size === 1) {
+                cameraControlState.pointerDown = {
+                    id: event.pointerId,
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    moved: false
+                };
+                cameraControlState.pinchActive = false;
+                return;
+            }
+
+            const points = [...cameraControlState.activePointers.values()].slice(0, 2);
+            cameraControlState.pointerDown = null;
+            cameraControlState.pinchActive = true;
+            cameraControlState.pinchStartDistance = getPointerDistance(points);
+            cameraControlState.pinchStartZoom = getCurrentCameraZoomLevel();
+        }
+
+        function handleCameraPointerMove(event) {
+            if (!cameraRunning || !cameraControlState.activePointers.has(event.pointerId)) {
+                return;
+            }
+
+            event.preventDefault();
+
+            cameraControlState.activePointers.set(event.pointerId, {
+                x: event.clientX,
+                y: event.clientY
+            });
+
+            if (cameraControlState.activePointers.size >= 2) {
+                const points = [...cameraControlState.activePointers.values()].slice(0, 2);
+                const distance = getPointerDistance(points);
+
+                if (!distance || !cameraControlState.pinchStartDistance) {
+                    return;
+                }
+
+                cameraControlState.pinchActive = true;
+                const midpoint = getPointerMidpoint(points);
+                const nextZoom = cameraControlState.pinchStartZoom * (distance / cameraControlState.pinchStartDistance);
+                queueCameraZoom(nextZoom, midpoint);
+                return;
+            }
+
+            if (cameraControlState.pointerDown?.id === event.pointerId) {
+                const distanceFromStart = Math.hypot(
+                    event.clientX - cameraControlState.pointerDown.startX,
+                    event.clientY - cameraControlState.pointerDown.startY
+                );
+
+                if (distanceFromStart > 10) {
+                    cameraControlState.pointerDown.moved = true;
+                }
+            }
+        }
+
+        function handleCameraPointerEnd(event) {
+            if (!cameraControlState.activePointers.has(event.pointerId)) {
+                return;
+            }
+
+            const shouldFocus = Boolean(
+                cameraControlState.pointerDown
+                && cameraControlState.pointerDown.id === event.pointerId
+                && !cameraControlState.pointerDown.moved
+                && !cameraControlState.pinchActive
+            );
+            const tapPoint = {
+                clientX: event.clientX,
+                clientY: event.clientY
+            };
+
+            cameraControlState.activePointers.delete(event.pointerId);
+
+            if (cameraControlState.pointerDown?.id === event.pointerId) {
+                cameraControlState.pointerDown = null;
+            }
+
+            if (cameraControlState.activePointers.size < 2) {
+                cameraControlState.pinchActive = false;
+                cameraControlState.pinchStartDistance = 0;
+                cameraControlState.pinchStartZoom = getCurrentCameraZoomLevel();
+            }
+
+            cameraReader.releasePointerCapture?.(event.pointerId);
+
+            if (shouldFocus && event.type === 'pointerup') {
+                void focusCameraAtPoint(tapPoint.clientX, tapPoint.clientY);
+            }
+        }
+
+        function handleCameraGestureStart(event) {
+            if (!cameraRunning) {
+                return;
+            }
+
+            event.preventDefault();
+            cameraControlState.gestureStartZoom = getCurrentCameraZoomLevel();
+        }
+
+        function handleCameraGestureChange(event) {
+            if (!cameraRunning) {
+                return;
+            }
+
+            event.preventDefault();
+
+            const referenceRect = getCameraInteractionRect();
+            queueCameraZoom(cameraControlState.gestureStartZoom * (event.scale || 1), {
+                clientX: event.clientX || (referenceRect.left + (referenceRect.width / 2)),
+                clientY: event.clientY || (referenceRect.top + (referenceRect.height / 2))
+            });
+        }
+
+        function handleCameraGestureEnd(event) {
+            if (!cameraRunning) {
+                return;
+            }
+
+            event.preventDefault();
+            cameraControlState.gestureStartZoom = getCurrentCameraZoomLevel();
+        }
+
+        function handleCameraTouchMove(event) {
+            if (!cameraRunning) {
+                return;
+            }
+
+            if (event.touches.length > 1) {
+                event.preventDefault();
+            }
         }
 
         function setInputMode(mode) {
@@ -847,6 +1393,8 @@
             cameraRunning = false;
             isInitializingCamera = false;
             lastCameraDecodedValue = '';
+            cameraControlState = createDefaultCameraControlState();
+            clearCameraFocusIndicator();
 
             if (scanner) {
                 try {
@@ -953,6 +1501,7 @@
 
                 cameraRunning = true;
                 isInitializingCamera = false;
+                await initializeCameraControlState();
                 stopCameraBtn.disabled = false;
                 cameraStatus.textContent = `鏡頭已啟動：${getCameraLabel(selectedCamera, cameras.indexOf(selectedCamera))}`;
                 setParseStatus('鏡頭已啟動，請把 QR Code 或條碼對準畫面中央。', 'success');
@@ -1084,6 +1633,17 @@
 
             await decodeImageFile(file, '拖曳圖片');
         });
+
+        cameraReader.addEventListener('wheel', handleCameraWheelZoom, { passive: false });
+        cameraReader.addEventListener('pointerdown', handleCameraPointerDown);
+        cameraReader.addEventListener('pointermove', handleCameraPointerMove);
+        cameraReader.addEventListener('pointerup', handleCameraPointerEnd);
+        cameraReader.addEventListener('pointercancel', handleCameraPointerEnd);
+        cameraReader.addEventListener('pointerleave', handleCameraPointerEnd);
+        cameraReader.addEventListener('gesturestart', handleCameraGestureStart, { passive: false });
+        cameraReader.addEventListener('gesturechange', handleCameraGestureChange, { passive: false });
+        cameraReader.addEventListener('gestureend', handleCameraGestureEnd, { passive: false });
+        cameraReader.addEventListener('touchmove', handleCameraTouchMove, { passive: false });
 
         document.addEventListener('paste', (event) => {
             if (parserPanel.hidden) {

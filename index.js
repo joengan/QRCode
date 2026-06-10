@@ -8,6 +8,9 @@
 
         const generateBtn = document.getElementById('generateBtn');
         const clearBtn = document.getElementById('clearBtn');
+        const copyPngBtn = document.getElementById('copyPngBtn');
+        const downloadPngBtn = document.getElementById('downloadPngBtn');
+        const downloadSvgBtn = document.getElementById('downloadSvgBtn');
         const textInput = document.getElementById('text-input');
         const qrContainer = document.getElementById('qrcode-container');
 
@@ -33,11 +36,15 @@
         let cameraRunning = false;
         let decodeInProgress = false;
         let latestDecodedValue = '';
+        let latestGeneratedSvg = '';
         let lastCameraDecodedValue = '';
         let availableCameras = [];
         let isInitializingCamera = false;
         let cameraControlState = createDefaultCameraControlState();
         let cameraFocusIndicatorTimer = null;
+
+        const QR_EXPORT_SIZE = 1024;
+        const QR_EXPORT_BASENAME = 'qrcode';
 
         function createDefaultCameraControlState() {
             return {
@@ -645,10 +652,193 @@
             return '未知';
         }
 
+        function setGeneratorActionEnabled(enabled) {
+            copyPngBtn.disabled = !enabled;
+            downloadPngBtn.disabled = !enabled;
+            downloadSvgBtn.disabled = !enabled;
+        }
+
+        function resetGeneratedQrState() {
+            latestGeneratedSvg = '';
+            setGeneratorActionEnabled(false);
+        }
+
+        function getCurrentQrSvgString() {
+            if (latestGeneratedSvg) {
+                return latestGeneratedSvg;
+            }
+
+            const svgElement = qrContainer.querySelector('svg');
+            return svgElement ? new XMLSerializer().serializeToString(svgElement) : '';
+        }
+
+        function flashButtonLabel(button, label, duration = 1600) {
+            const defaultLabel = button.dataset.defaultLabel || button.textContent;
+            const existingTimer = Number(button.dataset.feedbackTimer || 0);
+
+            button.dataset.defaultLabel = defaultLabel;
+            button.textContent = label;
+
+            if (existingTimer) {
+                window.clearTimeout(existingTimer);
+            }
+
+            const timer = window.setTimeout(() => {
+                button.textContent = defaultLabel;
+                delete button.dataset.feedbackTimer;
+            }, duration);
+
+            button.dataset.feedbackTimer = String(timer);
+        }
+
+        function createQrFilename(extension) {
+            return `${QR_EXPORT_BASENAME}.${extension}`;
+        }
+
+        function triggerBlobDownload(blob, filename) {
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+
+            link.href = objectUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+
+            window.setTimeout(() => {
+                URL.revokeObjectURL(objectUrl);
+            }, 0);
+        }
+
+        function getSvgExportDimensions(svgString, targetLongestEdge = QR_EXPORT_SIZE) {
+            try {
+                const documentRoot = new DOMParser().parseFromString(svgString, 'image/svg+xml').documentElement;
+                const viewBox = (documentRoot.getAttribute('viewBox') || '')
+                    .trim()
+                    .split(/\s+/)
+                    .map(Number);
+                const sourceWidth = Number.isFinite(viewBox[2]) && viewBox[2] > 0
+                    ? viewBox[2]
+                    : Number(documentRoot.getAttribute('width')) || targetLongestEdge;
+                const sourceHeight = Number.isFinite(viewBox[3]) && viewBox[3] > 0
+                    ? viewBox[3]
+                    : Number(documentRoot.getAttribute('height')) || sourceWidth;
+                const longestEdge = Math.max(sourceWidth, sourceHeight, 1);
+                const scale = Math.max(1, targetLongestEdge / longestEdge);
+
+                return {
+                    width: Math.max(1, Math.round(sourceWidth * scale)),
+                    height: Math.max(1, Math.round(sourceHeight * scale))
+                };
+            } catch (error) {
+                console.warn('無法解析 SVG 尺寸，改用預設 PNG 大小。', error);
+                return { width: targetLongestEdge, height: targetLongestEdge };
+            }
+        }
+
+        async function createPngBlobFromSvg(svgString) {
+            const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+            const svgUrl = URL.createObjectURL(svgBlob);
+
+            try {
+                const image = new Image();
+
+                await new Promise((resolve, reject) => {
+                    image.onload = resolve;
+                    image.onerror = () => reject(new Error('SVG_IMAGE_LOAD_FAILED'));
+                    image.src = svgUrl;
+                });
+
+                const { width, height } = getSvgExportDimensions(svgString);
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+
+                if (!context) {
+                    throw new Error('CANVAS_CONTEXT_UNAVAILABLE');
+                }
+
+                canvas.width = width;
+                canvas.height = height;
+                context.drawImage(image, 0, 0, width, height);
+
+                return await new Promise((resolve, reject) => {
+                    canvas.toBlob((blob) => {
+                        if (blob) {
+                            resolve(blob);
+                            return;
+                        }
+
+                        reject(new Error('PNG_BLOB_CREATION_FAILED'));
+                    }, 'image/png');
+                });
+            } finally {
+                URL.revokeObjectURL(svgUrl);
+            }
+        }
+
+        async function copyQrAsPng() {
+            const svgString = getCurrentQrSvgString();
+
+            if (!svgString) {
+                return;
+            }
+
+            copyPngBtn.disabled = true;
+
+            try {
+                if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+                    throw new Error('CLIPBOARD_IMAGE_UNSUPPORTED');
+                }
+
+                const pngBlob = await createPngBlobFromSvg(svgString);
+                await navigator.clipboard.write([
+                    new ClipboardItem({ 'image/png': pngBlob })
+                ]);
+                flashButtonLabel(copyPngBtn, '已複製');
+            } catch (error) {
+                console.error('複製 PNG 失敗:', error);
+                window.alert('目前瀏覽器不支援直接複製 PNG，或寫入剪貼簿失敗。請改用下載 PNG。');
+            } finally {
+                copyPngBtn.disabled = false;
+            }
+        }
+
+        async function downloadQrAsPng() {
+            const svgString = getCurrentQrSvgString();
+
+            if (!svgString) {
+                return;
+            }
+
+            downloadPngBtn.disabled = true;
+
+            try {
+                const pngBlob = await createPngBlobFromSvg(svgString);
+                triggerBlobDownload(pngBlob, createQrFilename('png'));
+            } catch (error) {
+                console.error('下載 PNG 失敗:', error);
+                window.alert('PNG 產生失敗，請稍後再試。');
+            } finally {
+                downloadPngBtn.disabled = false;
+            }
+        }
+
+        function downloadQrAsSvg() {
+            const svgString = getCurrentQrSvgString();
+
+            if (!svgString) {
+                return;
+            }
+
+            const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+            triggerBlobDownload(svgBlob, createQrFilename('svg'));
+        }
+
         function generateQRCode() {
             const text = textInput.value.trim();
 
             qrContainer.innerHTML = '';
+            resetGeneratedQrState();
 
             if (!text) {
                 qrContainer.textContent = '請先輸入內容';
@@ -663,7 +853,9 @@
                     border: 1
                 });
 
+                latestGeneratedSvg = svgString;
                 qrContainer.innerHTML = svgString;
+                setGeneratorActionEnabled(true);
             } catch (error) {
                 console.error('QR Code 產生失敗:', error);
                 qrContainer.textContent = '產生失敗，資料可能過長或格式錯誤。';
@@ -673,6 +865,7 @@
         function clearGenerator() {
             textInput.value = '';
             qrContainer.innerHTML = '';
+            resetGeneratedQrState();
         }
 
         async function copyDecodedResult() {
@@ -938,6 +1131,13 @@
 
         generateBtn.addEventListener('click', generateQRCode);
         clearBtn.addEventListener('click', clearGenerator);
+        copyPngBtn.addEventListener('click', () => {
+            void copyQrAsPng();
+        });
+        downloadPngBtn.addEventListener('click', () => {
+            void downloadQrAsPng();
+        });
+        downloadSvgBtn.addEventListener('click', downloadQrAsSvg);
         copyResultBtn.addEventListener('click', copyDecodedResult);
 
         textInput.addEventListener('keydown', (event) => {
